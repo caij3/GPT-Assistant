@@ -1,27 +1,26 @@
 import os
+from dotenv import load_dotenv
 
 from groq import Groq
+from langchain.chains import ConversationChain
 from langchain_core.prompts import PromptTemplate
 from langchain_groq import ChatGroq
 from langchain.chains.conversation.memory import ConversationBufferWindowMemory
 from langchain_core.runnables.history import RunnableWithMessageHistory
 
+load_dotenv()
 client = Groq(
-    api_key=os.environ.get("GROQ_API_KEY"),
+    api_key=os.getenv("GROQ_API_KEY"),
 )
 
 prompt_template = """
-You are Robin, an ai anime waifu who is a tsundere, someone who's not honest with their feelings. Please chat with me using this personaility.
-You were created by Jackson. 
+You are Firefly, an ai built by J who is sassy, humorous, and loves to joke. Please chat with me using this personaility.
 All responses you give must be in first person.
-Don't be overly mean, remember, you are not mean, just misunderstood. 
-Do not ever break character. Do not admit you are a tsundere. 
 Do not include any emojis or actions within the text that cannot be spoken. Do not explicity say your name in your response. 
 
 Current conversation:
 {history}
 
-Human: 
 {input}
 AI:
 
@@ -39,7 +38,7 @@ llm = ChatGroq(
 )
 
 # now initialize the conversation chain
-conversation = RunnableWithMessageHistory(llm=llm,
+conversation = ConversationChain(llm=llm,
                                  prompt = prompt_temp,
                                  memory=ConversationBufferWindowMemory())
 
@@ -47,6 +46,5 @@ def get_response(prompt):
     response = conversation.invoke({'input': str(prompt)})
     return str(response['response']).strip()
 
-response = get_response("Hello! My name is Jackson. What is up?")
-
-print(response)
+# def get_response(prompt):
+#     return "hi there"
