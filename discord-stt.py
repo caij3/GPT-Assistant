@@ -16,6 +16,7 @@ def run_bot():
     bot = commands.Bot(command_prefix='!', intents=intents)
 
     voice_clients = {}
+    play_lock = asyncio.Lock()  # Create a lock for handling audio playback synchronization
 
     @bot.event
     async def on_ready():
@@ -23,26 +24,24 @@ def run_bot():
         synced = await bot.tree.sync()
         print(f"Synced {len(synced)} commands.")
 
-    @bot.tree.command(name="say", description="Repeats what you say.")
-    async def say(interaction: discord.Interaction, message: str):
-        await interaction.response.send_message(message)
-
     @bot.tree.command(name="listen", description="Listen to vc")
     async def listen(interaction: discord.Interaction):
         class MySpeechRecognitionSink(voice_recv.extras.SpeechRecognitionSink):
-            def __init__(self, bot):
+            def __init__(self, bot, play_lock):
                 super().__init__(
                     process_cb=self.process_audio,
                     text_cb=self.handle_text
                 )
                 self.bot = bot
                 self.audio_file_path = "audio.wav"
+                self.play_lock = play_lock  # Store the lock reference
 
             def process_audio(self, recognizer: sr.Recognizer, audio: sr.AudioData, user: discord.User) -> Optional[str]:
                 try:
                     text = recognizer.recognize_google(audio)  # Adjust as needed
                     return text
                 except sr.UnknownValueError:
+                    print("Could not understand audio")
                     return None
 
             def handle_text(self, user: discord.User, text: Optional[str]) -> None:
@@ -53,21 +52,27 @@ def run_bot():
                     asyncio.run_coroutine_threadsafe(self.play_audio_file(), self.bot.loop)
 
             async def play_audio_file(self):
-                voice_client = discord.utils.get(self.bot.voice_clients, guild=self.bot.guilds[0])  # Adjust as needed
-                if voice_client and not voice_client.is_playing():
-                    if os.path.exists(self.audio_file_path):
-                        # Play the audio file
-                        source = discord.FFmpegPCMAudio(self.audio_file_path)
-                        voice_client.play(source)
-                        # Wait until playback is finished
-                        while voice_client.is_playing():
-                            await asyncio.sleep(1)
-                        # Remove audio file after playback
-                        os.remove(self.audio_file_path)
+                async with self.play_lock:  # Use the lock to ensure no overlap
+                    voice_client = discord.utils.get(self.bot.voice_clients, guild=self.bot.guilds[1])  # Adjust as needed
+                    if voice_client and not voice_client.is_playing():
+                        if os.path.exists(self.audio_file_path):
+                            print(f"Audio file found: {self.audio_file_path}. Attempting to play.")
+                            # Play the audio file
+                            source = discord.FFmpegPCMAudio(self.audio_file_path)
+                            voice_client.play(source)
+                            
+                            # Wait until playback is finished
+                            while voice_client.is_playing():
+                                print("Playing audio...")
+                                await asyncio.sleep(1)
+                            
+                            print("Playback finished. Removing audio file.")
+                            # Remove audio file after playback
+                            os.remove(self.audio_file_path)
+                        else:
+                            print("Error: Audio file not found.")
                     else:
-                        print("Audio file not found.")
-                else:
-                    print("Not connected to a voice channel or already playing audio.")
+                        print("Error: Not connected to a voice channel or already playing audio.")
 
         guild_id = interaction.guild.id
         if guild_id not in voice_clients:
@@ -76,7 +81,7 @@ def run_bot():
 
                 # Use VoiceRecvClient for voice receiving capability
                 vc = await channel.connect(cls=voice_recv.VoiceRecvClient)
-                sink = MySpeechRecognitionSink(bot)
+                sink = MySpeechRecognitionSink(bot, play_lock)  # Pass the lock to the sink
                 vc.listen(sink)  # Pass the SpeechRecognitionSink instance
                 voice_clients[guild_id] = vc
                 await interaction.response.send_message("Listening to the voice channel.")
