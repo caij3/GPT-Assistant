@@ -47,32 +47,37 @@ def run_bot():
             def handle_text(self, user: discord.User, text: Optional[str]) -> None:
                 if text:
                     print(f"{user.display_name} said: {text}")
+
+                    # Ensure no response and TTS are generated while audio is playing
+                    asyncio.run_coroutine_threadsafe(self.process_and_play_response(user, text), self.bot.loop)
+
+            async def process_and_play_response(self, user: discord.User, text: str):
+                async with self.play_lock:  # Acquire the lock to prevent overlap
                     response = get_response(f"{user.display_name}: {text}")
                     tts(response, self.audio_file_path)
-                    asyncio.run_coroutine_threadsafe(self.play_audio_file(), self.bot.loop)
+                    await self.play_audio_file()
 
             async def play_audio_file(self):
-                async with self.play_lock:  # Use the lock to ensure no overlap
-                    voice_client = discord.utils.get(self.bot.voice_clients, guild=self.bot.guilds[1])  # Adjust as needed
-                    if voice_client and not voice_client.is_playing():
-                        if os.path.exists(self.audio_file_path):
-                            print(f"Audio file found: {self.audio_file_path}. Attempting to play.")
-                            # Play the audio file
-                            source = discord.FFmpegPCMAudio(self.audio_file_path)
-                            voice_client.play(source)
-                            
-                            # Wait until playback is finished
-                            while voice_client.is_playing():
-                                print("Playing audio...")
-                                await asyncio.sleep(1)
-                            
-                            print("Playback finished. Removing audio file.")
-                            # Remove audio file after playback
-                            os.remove(self.audio_file_path)
-                        else:
-                            print("Error: Audio file not found.")
+                voice_client = discord.utils.get(self.bot.voice_clients, guild=self.bot.guilds[0])  # Adjust as needed
+                if voice_client and not voice_client.is_playing():
+                    if os.path.exists(self.audio_file_path):
+                        print(f"Audio file found: {self.audio_file_path}. Attempting to play.")
+                        # Play the audio file
+                        source = discord.FFmpegPCMAudio(self.audio_file_path)
+                        voice_client.play(source)
+                        
+                        # Wait until playback is finished
+                        while voice_client.is_playing():
+                            # print("Playing audio...")
+                            await asyncio.sleep(1)
+                        
+                        print("Playback finished. Removing audio file.")
+                        # Remove audio file after playback
+                        os.remove(self.audio_file_path)
                     else:
-                        print("Error: Not connected to a voice channel or already playing audio.")
+                        print("Error: Audio file not found.")
+                else:
+                    print("Error: Not connected to a voice channel or already playing audio.")
 
         guild_id = interaction.guild.id
         if guild_id not in voice_clients:
