@@ -7,6 +7,7 @@ import asyncio
 from typing import Optional
 from tts import tts
 from model import get_response
+from shared import prompts_queue  # Import from the new shared module
 
 def run_bot():
     load_dotenv()
@@ -16,7 +17,8 @@ def run_bot():
     bot = commands.Bot(command_prefix='!', intents=intents)
 
     voice_clients = {}
-    play_lock = asyncio.Lock()  # Create a lock for handling audio playback synchronization
+    play_lock = asyncio.Lock()
+    current_prompt = None  # Track the currently processing prompt
 
     @bot.event
     async def on_ready():
@@ -28,17 +30,14 @@ def run_bot():
     async def listen(interaction: discord.Interaction):
         class MySpeechRecognitionSink(voice_recv.extras.SpeechRecognitionSink):
             def __init__(self, bot, play_lock):
-                super().__init__(
-                    process_cb=self.process_audio,
-                    text_cb=self.handle_text
-                )
+                super().__init__(process_cb=self.process_audio, text_cb=self.handle_text)
                 self.bot = bot
                 self.audio_file_path = "audio.wav"
-                self.play_lock = play_lock  # Store the lock reference
+                self.play_lock = play_lock
 
             def process_audio(self, recognizer: sr.Recognizer, audio: sr.AudioData, user: discord.User) -> Optional[str]:
                 try:
-                    text = recognizer.recognize_google(audio)  # Adjust as needed
+                    text = recognizer.recognize_google(audio)
                     return text
                 except sr.UnknownValueError:
                     print("Could not understand audio")
@@ -47,32 +46,37 @@ def run_bot():
             def handle_text(self, user: discord.User, text: Optional[str]) -> None:
                 if text:
                     print(f"{user.display_name} said: {text}")
-
-                    # Ensure no response and TTS are generated while audio is playing
+                    prompt = (user, text)
+                    prompts_queue.append(prompt)  # Add to the queue
                     asyncio.run_coroutine_threadsafe(self.process_and_play_response(user, text), self.bot.loop)
 
             async def process_and_play_response(self, user: discord.User, text: str):
-                async with self.play_lock:  # Acquire the lock to prevent overlap
+                async with self.play_lock:
+                    nonlocal current_prompt
+
+                    prompt = (user, text)
+                    if prompt not in prompts_queue:
+                        print("Prompt was deleted before processing. Skipping.")
+                        return
+                    
+                    current_prompt = prompt
                     response = get_response(f"{user.display_name}: {text}")
                     tts(response, self.audio_file_path)
                     await self.play_audio_file()
 
+                    # After processing, remove the prompt from the queue
+                    if current_prompt in prompts_queue:
+                        prompts_queue.remove(current_prompt)
+                    current_prompt = None  # Reset the current prompt
+
             async def play_audio_file(self):
-                voice_client = discord.utils.get(self.bot.voice_clients, guild=self.bot.guilds[0])  # Adjust as needed
+                voice_client = discord.utils.get(self.bot.voice_clients, guild=self.bot.guilds[0])
                 if voice_client and not voice_client.is_playing():
                     if os.path.exists(self.audio_file_path):
-                        print(f"Audio file found: {self.audio_file_path}. Attempting to play.")
-                        # Play the audio file
                         source = discord.FFmpegPCMAudio(self.audio_file_path)
                         voice_client.play(source)
-                        
-                        # Wait until playback is finished
                         while voice_client.is_playing():
-                            # print("Playing audio...")
                             await asyncio.sleep(1)
-                        
-                        print("Playback finished. Removing audio file.")
-                        # Remove audio file after playback
                         os.remove(self.audio_file_path)
                     else:
                         print("Error: Audio file not found.")
@@ -83,11 +87,9 @@ def run_bot():
         if guild_id not in voice_clients:
             if interaction.user.voice:
                 channel = interaction.user.voice.channel
-
-                # Use VoiceRecvClient for voice receiving capability
                 vc = await channel.connect(cls=voice_recv.VoiceRecvClient)
-                sink = MySpeechRecognitionSink(bot, play_lock)  # Pass the lock to the sink
-                vc.listen(sink)  # Pass the SpeechRecognitionSink instance
+                sink = MySpeechRecognitionSink(bot, play_lock)
+                vc.listen(sink)
                 voice_clients[guild_id] = vc
                 await interaction.response.send_message("Listening to the voice channel.")
             else:
@@ -107,6 +109,3 @@ def run_bot():
             await interaction.response.send_message("Not currently listening to any voice channel.")
 
     bot.run(TOKEN)
-
-if __name__ == "__main__":
-    run_bot()
