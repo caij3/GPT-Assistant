@@ -34,8 +34,13 @@ def run_bot():
                 self.bot = bot
                 self.audio_file_path = "audio.wav"
                 self.play_lock = play_lock
+                self.is_playing_audio = False  # Track whether audio is being played
 
             def process_audio(self, recognizer: sr.Recognizer, audio: sr.AudioData, user: discord.User) -> Optional[str]:
+                if self.is_playing_audio:
+                    print("Currently playing audio. Ignoring speech input.")
+                    return None  # Skip processing if playing audio
+
                 try:
                     text = recognizer.recognize_google(audio)
                     return text
@@ -44,7 +49,7 @@ def run_bot():
                     return None
 
             def handle_text(self, user: discord.User, text: Optional[str]) -> None:
-                if text:
+                if text and not self.is_playing_audio:  # Check if audio is not being played
                     print(f"{user.display_name} said: {text}")
                     prompt = (user, text)
                     prompts_queue.append(prompt)  # Add to the queue
@@ -58,7 +63,7 @@ def run_bot():
                     if prompt not in prompts_queue:
                         print("Prompt was deleted before processing. Skipping.")
                         return
-                    
+
                     current_prompt = prompt
                     response = get_response(f"{user.display_name}: {text}")
                     tts(response, self.audio_file_path)
@@ -70,7 +75,8 @@ def run_bot():
                     current_prompt = None  # Reset the current prompt
 
             async def play_audio_file(self):
-                voice_client = discord.utils.get(self.bot.voice_clients, guild=self.bot.guilds[0])
+                self.is_playing_audio = True  # Set playing state to True
+                voice_client = discord.utils.get(self.bot.voice_clients, guild=self.bot.guilds[1])
                 if voice_client and not voice_client.is_playing():
                     if os.path.exists(self.audio_file_path):
                         source = discord.FFmpegPCMAudio(self.audio_file_path)
@@ -82,6 +88,9 @@ def run_bot():
                         print("Error: Audio file not found.")
                 else:
                     print("Error: Not connected to a voice channel or already playing audio.")
+                
+                self.is_playing_audio = False  # Reset playing state after audio finishes
+
 
         guild_id = interaction.guild.id
         if guild_id not in voice_clients:
