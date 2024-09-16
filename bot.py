@@ -29,7 +29,7 @@ def run_bot():
     @bot.tree.command(name="listen", description="Listen to vc")
     async def listen(interaction: discord.Interaction):
         class MySpeechRecognitionSink(voice_recv.extras.SpeechRecognitionSink):
-            def __init__(self, bot, play_lock):
+            def __init__(self, bot, play_lock, guild):
                 super().__init__(process_cb=self.process_audio, text_cb=self.handle_text)
                 self.bot = bot
                 self.audio_file_path = "audio.wav"
