@@ -34,7 +34,8 @@ def run_bot():
                 self.bot = bot
                 self.audio_file_path = "audio.wav"
                 self.play_lock = play_lock
-                self.is_playing_audio = False  # Track whether audio is being played
+                self.is_playing_audio = False
+                self.audio_guild = guild
 
             def process_audio(self, recognizer: sr.Recognizer, audio: sr.AudioData, user: discord.User) -> Optional[str]:
                 if self.is_playing_audio:
@@ -76,7 +77,7 @@ def run_bot():
 
             async def play_audio_file(self):
                 self.is_playing_audio = True  # Set playing state to True
-                voice_client = discord.utils.get(self.bot.voice_clients, guild=self.bot.guilds[1])
+                voice_client = discord.utils.get(self.bot.voice_clients, guild=self.audio_guild)
                 if voice_client and not voice_client.is_playing():
                     if os.path.exists(self.audio_file_path):
                         source = discord.FFmpegPCMAudio(self.audio_file_path)
@@ -97,7 +98,7 @@ def run_bot():
             if interaction.user.voice:
                 channel = interaction.user.voice.channel
                 vc = await channel.connect(cls=voice_recv.VoiceRecvClient)
-                sink = MySpeechRecognitionSink(bot, play_lock)
+                sink = MySpeechRecognitionSink(bot, play_lock, interaction.guild)
                 vc.listen(sink)
                 voice_clients[guild_id] = vc
                 await interaction.response.send_message("Listening to the voice channel.")
