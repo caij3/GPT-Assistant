@@ -78,19 +78,26 @@ def run_bot():
             async def play_audio_file(self):
                 self.is_playing_audio = True  # Set playing state to True
                 voice_client = discord.utils.get(self.bot.voice_clients, guild=self.audio_guild)
+                
                 if voice_client and not voice_client.is_playing():
                     if os.path.exists(self.audio_file_path):
                         source = discord.FFmpegPCMAudio(self.audio_file_path)
                         voice_client.play(source)
                         while voice_client.is_playing():
                             await asyncio.sleep(1)
-                        os.remove(self.audio_file_path)
+                            # Check if stop was triggered
+                            if not self.is_playing_audio:
+                                voice_client.stop()  # Stop the current audio
+                                break
+                        if os.path.exists(self.audio_file_path):  # Ensure file still exists before deleting
+                            os.remove(self.audio_file_path)
                     else:
                         print("Error: Audio file not found.")
                 else:
                     print("Error: Not connected to a voice channel or already playing audio.")
                 
-                self.is_playing_audio = False  # Reset playing state after audio finishes
+                self.is_playing_audio = False  # Reset playing state after audio finishes or stops
+
 
 
         guild_id = interaction.guild.id
@@ -106,6 +113,21 @@ def run_bot():
                 await interaction.response.send_message("You are not in a voice channel.")
         else:
             await interaction.response.send_message("Already listening in a voice channel.")
+
+    @bot.tree.command(name="skip", description="Skip the current audio playback.")
+    async def skip(interaction: discord.Interaction):
+        guild_id = interaction.guild.id
+        if guild_id in voice_clients:
+            vc = voice_clients[guild_id]
+            # Find the sink and stop the current audio
+            if isinstance(vc.listener, MySpeechRecognitionSink):
+                vc.listener.is_playing_audio = False  # This will stop the audio
+                await interaction.response.send_message("Skipped the current audio.")
+            else:
+                await interaction.response.send_message("No audio is currently playing.")
+        else:
+            await interaction.response.send_message("Not connected to a voice channel.")
+
 
     @bot.tree.command(name="stop", description="Stop listening")
     async def stop(interaction: discord.Interaction):
