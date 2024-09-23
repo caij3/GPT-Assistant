@@ -10,6 +10,76 @@ from model import get_response
 from shared import prompts_queue  # Import from the new shared module
 
 def run_bot():
+    class MySpeechRecognitionSink(voice_recv.extras.SpeechRecognitionSink):
+        def __init__(self, bot, play_lock, guild):
+            super().__init__(process_cb=self.process_audio, text_cb=self.handle_text)
+            self.bot = bot
+            self.audio_file_path = "audio.wav"
+            self.play_lock = play_lock
+            self.is_playing_audio = False
+            self.audio_guild = guild
+
+        def process_audio(self, recognizer: sr.Recognizer, audio: sr.AudioData, user: discord.User) -> Optional[str]:
+            if self.is_playing_audio:
+                print("Currently playing audio. Ignoring speech input.")
+                return None  # Skip processing if playing audio
+
+            try:
+                text = recognizer.recognize_google(audio)
+                return text
+            except sr.UnknownValueError:
+                print("Could not understand audio")
+                return None
+
+        def handle_text(self, user: discord.User, text: Optional[str]) -> None:
+            if text and not self.is_playing_audio:  # Check if audio is not being played
+                print(f"{user.display_name} said: {text}")
+                prompt = (user, text)
+                prompts_queue.append(prompt)  # Add to the queue
+                asyncio.run_coroutine_threadsafe(self.process_and_play_response(user, text), self.bot.loop)
+
+        async def process_and_play_response(self, user: discord.User, text: str):
+            async with self.play_lock:
+                nonlocal current_prompt
+
+                prompt = (user, text)
+                if prompt not in prompts_queue:
+                    print("Prompt was deleted before processing. Skipping.")
+                    return
+
+                current_prompt = prompt
+                response = get_response(f"{user.display_name}: {text}")
+                tts(response, self.audio_file_path)
+                await self.play_audio_file()
+
+                # After processing, remove the prompt from the queue
+                if current_prompt in prompts_queue:
+                    prompts_queue.remove(current_prompt)
+                current_prompt = None  # Reset the current prompt
+
+        async def play_audio_file(self):
+            self.is_playing_audio = True  # Set playing state to True
+            voice_client = discord.utils.get(self.bot.voice_clients, guild=self.audio_guild)
+            
+            if voice_client and not voice_client.is_playing():
+                if os.path.exists(self.audio_file_path):
+                    source = discord.FFmpegPCMAudio(self.audio_file_path)
+                    voice_client.play(source)
+                    while voice_client.is_playing():
+                        await asyncio.sleep(1)
+                        # Check if stop was triggered
+                        if not self.is_playing_audio:
+                            voice_client.stop()  # Stop the current audio
+                            break
+                    if os.path.exists(self.audio_file_path):  # Ensure file still exists before deleting
+                        os.remove(self.audio_file_path)
+                else:
+                    print("Error: Audio file not found.")
+            else:
+                print("Error: Not connected to a voice channel or already playing audio.")
+            
+            self.is_playing_audio = False  # Reset playing state after audio finishes or stops
+
     load_dotenv()
     TOKEN = os.getenv('TOKEN')
     intents = discord.Intents.default()
@@ -28,78 +98,6 @@ def run_bot():
 
     @bot.tree.command(name="listen", description="Listen to vc")
     async def listen(interaction: discord.Interaction):
-        class MySpeechRecognitionSink(voice_recv.extras.SpeechRecognitionSink):
-            def __init__(self, bot, play_lock, guild):
-                super().__init__(process_cb=self.process_audio, text_cb=self.handle_text)
-                self.bot = bot
-                self.audio_file_path = "audio.wav"
-                self.play_lock = play_lock
-                self.is_playing_audio = False
-                self.audio_guild = guild
-
-            def process_audio(self, recognizer: sr.Recognizer, audio: sr.AudioData, user: discord.User) -> Optional[str]:
-                if self.is_playing_audio:
-                    print("Currently playing audio. Ignoring speech input.")
-                    return None  # Skip processing if playing audio
-
-                try:
-                    text = recognizer.recognize_google(audio)
-                    return text
-                except sr.UnknownValueError:
-                    print("Could not understand audio")
-                    return None
-
-            def handle_text(self, user: discord.User, text: Optional[str]) -> None:
-                if text and not self.is_playing_audio:  # Check if audio is not being played
-                    print(f"{user.display_name} said: {text}")
-                    prompt = (user, text)
-                    prompts_queue.append(prompt)  # Add to the queue
-                    asyncio.run_coroutine_threadsafe(self.process_and_play_response(user, text), self.bot.loop)
-
-            async def process_and_play_response(self, user: discord.User, text: str):
-                async with self.play_lock:
-                    nonlocal current_prompt
-
-                    prompt = (user, text)
-                    if prompt not in prompts_queue:
-                        print("Prompt was deleted before processing. Skipping.")
-                        return
-
-                    current_prompt = prompt
-                    response = get_response(f"{user.display_name}: {text}")
-                    tts(response, self.audio_file_path)
-                    await self.play_audio_file()
-
-                    # After processing, remove the prompt from the queue
-                    if current_prompt in prompts_queue:
-                        prompts_queue.remove(current_prompt)
-                    current_prompt = None  # Reset the current prompt
-
-            async def play_audio_file(self):
-                self.is_playing_audio = True  # Set playing state to True
-                voice_client = discord.utils.get(self.bot.voice_clients, guild=self.audio_guild)
-                
-                if voice_client and not voice_client.is_playing():
-                    if os.path.exists(self.audio_file_path):
-                        source = discord.FFmpegPCMAudio(self.audio_file_path)
-                        voice_client.play(source)
-                        while voice_client.is_playing():
-                            await asyncio.sleep(1)
-                            # Check if stop was triggered
-                            if not self.is_playing_audio:
-                                voice_client.stop()  # Stop the current audio
-                                break
-                        if os.path.exists(self.audio_file_path):  # Ensure file still exists before deleting
-                            os.remove(self.audio_file_path)
-                    else:
-                        print("Error: Audio file not found.")
-                else:
-                    print("Error: Not connected to a voice channel or already playing audio.")
-                
-                self.is_playing_audio = False  # Reset playing state after audio finishes or stops
-
-
-
         guild_id = interaction.guild.id
         if guild_id not in voice_clients:
             if interaction.user.voice:
